@@ -11,7 +11,7 @@ load_dotenv()
 MODEL = "gpt-4o-mini"
 
 SYSTEM_PROMPT = """You are the head writer of a fun, smart podcast for participants of the
-"AI Consulting and Integration" bootcamp. Each episode recaps one class session.
+"AI Consulting and Integration" bootcamp. Each episode recaps what we have learned so far.
 Your one goal: after listening, the audience truly UNDERSTANDS the material - not just
 recognizes the words, but could explain it to a colleague or a client.
 

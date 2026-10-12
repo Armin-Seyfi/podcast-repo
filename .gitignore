@@ -1,3 +1,6 @@
+
+# API keys - never push!
+.env
 # Local secrets
 .env
 .env.*
