@@ -1,5 +1,7 @@
 from pathlib import Path
 import re
+import unicodedata
+
 from pypdf import PdfReader
 
 
@@ -46,22 +48,42 @@ def read_transcript(file_path: str) -> str:
 
 
 def clean_text(text: str) -> str:
-    """Normalize whitespace while preserving paragraph boundaries."""
+    """Normalize Unicode, expand ligatures, and clean whitespace."""
+    # Normalize equivalent Unicode representations.
+    text = unicodedata.normalize("NFC", text)
+
+    # Expand common typographic ligatures.
+    ligatures = {
+        "\ufb00": "ff",
+        "\ufb01": "fi",
+        "\ufb02": "fl",
+        "\ufb03": "ffi",
+        "\ufb04": "ffl",
+        "\ufb05": "st",
+        "\ufb06": "st",
+    }
+
+    for original, replacement in ligatures.items():
+        text = text.replace(original, replacement)
+
+    # Standardize line endings.
     text = text.replace("\r\n", "\n").replace("\r", "\n")
 
+    # Collapse spaces and tabs within each line.
     lines = [
         re.sub(r"[ \t]+", " ", line).strip()
         for line in text.split("\n")
     ]
     text = "\n".join(lines)
 
+    # Keep one blank line between paragraphs.
     text = re.sub(r"\n{3,}", "\n\n", text)
 
     return text.strip()
 
 
 def process_file(file_path: str) -> str:
-    """Read a supported file and return whitespace-cleaned text."""
+    """Read a supported file and return cleaned text."""
     raw_text = read_transcript(file_path)
     cleaned_text = clean_text(raw_text)
 
