@@ -1,1 +1,16 @@
+
+# API keys - never push!
 .env
+# Local secrets
+.env
+.env.*
+
+# Shared example without real credentials
+!.env.example
+
+# Local editor settings
+.vscode/
+
+# Python cache
+__pycache__/
+*.pyc
