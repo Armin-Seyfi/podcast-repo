@@ -5,7 +5,7 @@ client = OpenAI()
 def generate_audio(script, path="outputs/recap.mp3"):
     # Convert text into speech
     response = client.audio.speech.create(
-        model="gpt-4o-mini-tts",
+        model="tts-1",
         voice="alloy",
         input=script,
     )
