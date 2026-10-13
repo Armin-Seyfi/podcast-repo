@@ -1,6 +1,10 @@
 from pathlib import Path
 import re
 import unicodedata
+from urllib.parse import urlsplit
+
+import requests
+import trafilatura
 
 from pypdf import PdfReader
 
@@ -86,6 +90,73 @@ def process_file(file_path: str) -> str:
     """Read a supported file and return cleaned text."""
     raw_text = read_transcript(file_path)
     cleaned_text = clean_text(raw_text)
+
+    if not cleaned_text:
+        raise ValueError("No text remains after cleaning.")
+
+    return cleaned_text
+
+def process_url(url: str) -> str:
+    """Download a public HTML page and return cleaned article text."""
+    if not isinstance(url, str) or not url.strip():
+        raise ValueError("Please provide a website URL.")
+
+    url = url.strip()
+    parsed_url = urlsplit(url)
+
+    if parsed_url.scheme not in {"http", "https"} or not parsed_url.hostname:
+        raise ValueError("Please provide a valid HTTP or HTTPS URL.")
+
+    try:
+        response = requests.get(
+            url,
+            timeout=(5, 20),
+            headers={"User-Agent": "PodcastStudio/0.1"},
+        )
+        response.raise_for_status()
+
+    except requests.exceptions.Timeout as error:
+        raise RuntimeError("The website took too long to respond.") from error
+
+    
+    except requests.exceptions.HTTPError as error:
+        status = error.response.status_code
+        raise RuntimeError(
+            f"The website returned HTTP {status}. "
+            "The page could not be downloaded."
+        ) from error
+
+    except requests.exceptions.RequestException as error:
+        raise RuntimeError(
+            "Could not connect to the website. "
+            "Check the URL and network connection."
+        ) from error
+
+    content_type = response.headers.get("Content-Type", "").lower()
+
+    if not any(
+        html_type in content_type
+        for html_type in ("text/html", "application/xhtml+xml")
+    ):
+        raise ValueError(
+            "The URL must point to an HTML page, not a PDF or another file."
+        )
+
+    extracted_text = trafilatura.extract(
+        response.content,
+        url=response.url,
+        output_format="txt",
+        include_comments=False,
+        include_tables=True,
+    )
+
+    if not extracted_text or not extracted_text.strip():
+        raise ValueError(
+            "No article text could be extracted. "
+            "The page may require JavaScript, login, or a subscription."
+        )
+
+    cleaned_text = clean_text(extracted_text)
 
     if not cleaned_text:
         raise ValueError("No text remains after cleaning.")
