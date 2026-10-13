@@ -1,4 +1,7 @@
 openai
 python-dotenv
 pypdf==6.20.0
+requests==2.34.2
+trafilatura==2.3.1
+gradio
 gradio
