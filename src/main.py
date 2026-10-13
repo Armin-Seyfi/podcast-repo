@@ -5,7 +5,9 @@ from pathlib import Path
 import gradio as gr
 from dotenv import load_dotenv
 
-load_dotenv()  # load the API key from .env first
+#load_dotenv()  # load the API key from .env first
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+load_dotenv(PROJECT_ROOT / ".env")
 
 from data_processor import read_transcript, clean_text
 from llm_processor import create_script, LENGTHS
@@ -65,4 +67,5 @@ demo = gr.Interface(
 )
 
 if __name__ == "__main__":
-    demo.launch(share=True)
+    #demo.launch(share=True)
+    demo.launch()
