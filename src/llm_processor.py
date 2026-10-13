@@ -1,5 +1,6 @@
 """llm_processor.py - turns cleaned class notes into a podcast script using an LLM."""
 
+import json
 import os
 
 from dotenv import load_dotenv
@@ -9,6 +10,13 @@ from openai import OpenAI
 load_dotenv()
 
 MODEL = "gpt-4o-mini"
+
+# Podcast lengths: the TTS voice speaks roughly 150 words per minute
+LENGTHS = {
+    "short": {"minutes": 3, "words": 450, "parts": 1},
+    "medium": {"minutes": 15, "words": 2250, "parts": 4},
+    "long": {"minutes": 30, "words": 4500, "parts": 8},
+}
 
 SYSTEM_PROMPT = """You are the head writer of a fun, smart podcast for participants of the
 "AI Consulting and Integration" bootcamp. Each episode recaps what we have learned so far.
@@ -82,22 +90,9 @@ FORMAT (this script goes straight to text-to-speech)
 - Keep sentences short and natural, like real speech. Spell out symbols in words when reading code."""
 
 
-def create_script(text, max_words=600):
-    """Send the cleaned text to the LLM and return a podcast script as a string."""
-    if not text or not text.strip():
-        raise ValueError("create_script() received empty text - check the transcript file.")
-
-    api_key = os.getenv("OPENAI_API_KEY")
-    if not api_key:
-        raise RuntimeError("OPENAI_API_KEY not found. Add it to your .env file.")
-
-    client = OpenAI(api_key=api_key)
-
-    user_prompt = (
-        f"Write a podcast episode script of about {max_words} words "
-        f"based on these class notes:\n\n{text}"
-    )
-
+def _ask(client, user_prompt, json_mode=False):
+    """Send one request to the LLM (with our system prompt) and return the reply text."""
+    extra = {"response_format": {"type": "json_object"}} if json_mode else {}
     response = client.chat.completions.create(
         model=MODEL,
         messages=[
@@ -105,10 +100,77 @@ def create_script(text, max_words=600):
             {"role": "user", "content": user_prompt},
         ],
         temperature=0.7,
+        **extra,
     )
-
     return response.choices[0].message.content.strip()
-#print(response.choices[0].model_dump())
+
+
+def _plan_parts(client, text, parts, minutes):
+    """Ask the LLM to split the episode into parts and return one short brief per part."""
+    reply = _ask(
+        client,
+        f"Plan a {minutes}-minute podcast episode based on the class notes below, split into "
+        f"exactly {parts} consecutive parts. Together the parts must cover every key concept "
+        f"from the notes, in a logical teaching order. Part 1 opens the episode, the last part "
+        f"closes it.\n"
+        f'Reply as JSON: {{"parts": ["<2-3 sentence brief of part 1>", ...]}}\n\n'
+        f"Class notes:\n{text}",
+        json_mode=True,
+    )
+    briefs = json.loads(reply)["parts"]
+    return briefs[:parts]
+
+
+def create_script(text, length="short"):
+    """Turn the cleaned text into a podcast script of the chosen length (short/medium/long)."""
+    if not text or not text.strip():
+        raise ValueError("create_script() received empty text - check the transcript file.")
+    if length not in LENGTHS:
+        raise ValueError(f"Unknown length '{length}'. Choose one of: {', '.join(LENGTHS)}")
+
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        raise RuntimeError("OPENAI_API_KEY not found. Add it to your .env file.")
+
+    client = OpenAI(api_key=api_key)
+    settings = LENGTHS[length]
+
+    # Short episode: one request is enough
+    if settings["parts"] == 1:
+        return _ask(
+            client,
+            f"Write a podcast episode script of about {settings['words']} words "
+            f"(about {settings['minutes']} minutes spoken) based on these class notes:\n\n{text}",
+        )
+
+    # Medium/long episode: LLMs stop early on very long texts, so we write it part by part
+    briefs = _plan_parts(client, text, settings["parts"], settings["minutes"])
+    words_per_part = settings["words"] // len(briefs)
+    script_parts = []
+
+    for number, brief in enumerate(briefs, start=1):
+        if number == 1:
+            role = "This is the OPENING part: start with the hook and the preview of the episode."
+        elif number == len(briefs):
+            role = "This is the FINAL part: finish the topic, then do the recap and the sign-off."
+        else:
+            role = "This is a MIDDLE part: no greeting, no recap, no sign-off."
+
+        previous = script_parts[-1][-800:] if script_parts else "(this is the start of the episode)"
+
+        script_parts.append(_ask(
+            client,
+            f"We are writing a {settings['minutes']}-minute episode in {len(briefs)} parts. "
+            f"Write part {number} of {len(briefs)}, about {words_per_part} words.\n"
+            f"{role}\n"
+            f"What this part covers: {brief}\n"
+            f"Stay on this part's topic and do not repeat earlier parts. Go into depth with "
+            f"examples and practical consulting scenarios rather than adding filler.\n\n"
+            f"The previous part ended like this (continue smoothly from here):\n{previous}\n\n"
+            f"Full class notes for reference:\n{text}",
+        ))
+
+    return "\n\n".join(script_parts)
 
 # Quick test: run `python src/llm_processor.py` to try this file on its own
 if __name__ == "__main__":
@@ -117,4 +179,4 @@ if __name__ == "__main__":
         "defined with def. Functions can take parameters and return values. "
         "Splitting a program into modules keeps each file focused on one job."
     )
-    print(create_script(sample, max_words=200))
+    print(create_script(sample, length="short"))
