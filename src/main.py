@@ -12,9 +12,6 @@ from openai import OpenAIError
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 OUTPUT_DIR = PROJECT_ROOT / "outputs"
 
-MAX_SCRIPT_WORDS = 300
-MAX_TTS_CHARACTERS = 4096
-
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
@@ -22,12 +19,24 @@ logger = logging.getLogger(__name__)
 load_dotenv(PROJECT_ROOT / ".env")
 
 from data_processor import process_file, process_url
-from llm_processor import create_script
+from llm_processor import create_script, LENGTHS
 from tts_generator import generate_audio
 
 
-def make_recap(file_path, article_url):
-    """Return the generated script, audio path, and download path."""
+# Map the displayed label to the length key used by the LLM.
+LENGTH_CHOICES = {
+    f"{name.capitalize()} (~{settings['minutes']} min)": name
+    for name, settings in LENGTHS.items()
+}
+
+
+def make_recap(
+    file_path,
+    article_url,
+    length_label,
+    progress=gr.Progress(),
+):
+    """Return the script, audio path, and download path."""
     article_url = (article_url or "").strip()
 
     if not file_path and not article_url:
@@ -40,7 +49,12 @@ def make_recap(file_path, article_url):
             "Please use one source: a file OR an article URL."
         )
 
+    if length_label not in LENGTH_CHOICES:
+        raise gr.Error("Please select a valid podcast length.")
+
     # Step 1: Extract and clean the source text.
+    progress(0.05, desc="Reading the source...")
+
     try:
         if article_url:
             text = process_url(article_url)
@@ -59,9 +73,14 @@ def make_recap(file_path, article_url):
     except OSError as error:
         raise gr.Error("Could not create the outputs folder.") from error
 
-    # Step 2: Generate the script.
+    # Step 2: Generate the script using the selected length.
+    progress(0.2, desc="Generating the podcast script...")
+
     try:
-        script = create_script(text, max_words=MAX_SCRIPT_WORDS)
+        script = create_script(
+            text,
+            length=LENGTH_CHOICES[length_label],
+        )
     except OpenAIError as error:
         logger.exception("Script generation API request failed.")
         raise gr.Error(
@@ -75,7 +94,7 @@ def make_recap(file_path, article_url):
 
     script = script.strip()
 
-    # Save the script so it survives any subsequent TTS failure.
+    # Preserve the script even if TTS fails.
     try:
         script_path.write_text(script, encoding="utf-8")
     except OSError as error:
@@ -89,16 +108,9 @@ def make_recap(file_path, article_url):
         len(script),
     )
 
-    # Step 3: Validate the TTS input before sending a request.
-    if len(script) > MAX_TTS_CHARACTERS:
-        raise gr.Error(
-            f"The script has {len(script)} characters. "
-            f"TTS accepts at most {MAX_TTS_CHARACTERS} per request. "
-            f"The script is saved as {script_path.name}. "
-            "No TTS request was sent."
-        )
+    # Step 3: Generate audio. The TTS module handles chunking.
+    progress(0.6, desc="Recording the audio...")
 
-    # Step 4: Generate the audio.
     try:
         saved_audio = generate_audio(
             script,
@@ -122,13 +134,17 @@ def make_recap(file_path, article_url):
 
     saved_audio = Path(saved_audio)
 
-    if not saved_audio.is_file() or saved_audio.stat().st_size == 0:
+    try:
+        if not saved_audio.is_file() or saved_audio.stat().st_size == 0:
+            raise RuntimeError("TTS did not produce a non-empty audio file.")
+    except (OSError, RuntimeError) as error:
         raise gr.Error(
-            "TTS did not produce a non-empty audio file. "
-            f"Your script is saved as {script_path.name}."
-        )
+            f"{error} Your script is saved as {script_path.name}."
+        ) from error
 
     audio_file = str(saved_audio.resolve())
+
+    progress(1.0, desc="Podcast ready!")
 
     return script, audio_file, audio_file
 
@@ -145,6 +161,11 @@ demo = gr.Interface(
             label="Article URL",
             placeholder="https://example.com/article",
         ),
+        gr.Radio(
+            choices=list(LENGTH_CHOICES),
+            value=list(LENGTH_CHOICES)[0],
+            label="Podcast length",
+        ),
     ],
     outputs=[
         gr.Textbox(label="Recap script", lines=15),
@@ -153,12 +174,13 @@ demo = gr.Interface(
     ],
     title="Lesson Recapper",
     description=(
-        "Upload a PDF/TXT file OR enter a public article URL. "
-        "Get a short podcast recap. "
+        "Upload a PDF/TXT file OR enter a public article URL "
+        "and choose an approximate podcast length. "
         "Generation uses paid AI APIs."
     ),
 )
 
 if __name__ == "__main__":
     demo.launch(share=False)
+    
     
