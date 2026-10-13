@@ -14,3 +14,5 @@
 # Python cache
 __pycache__/
 *.pyc
+outputs/*.mp3
+.gradio/
